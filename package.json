@@ -1,14 +1,39 @@
 {
 	"name": "ink",
-	"version": "4.4.1",
-	"description": "React for CLI",
+	"version": "4.4.1-fairy.1",
+	"description": "React for CLI - Fairy Fork with FlickerTracker for spinner-stable Markdown tables",
 	"license": "MIT",
-	"repository": "vadimdemedes/ink",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/vadimdemedes/ink.git",
+		"directory": "."
+	},
 	"author": {
-		"name": "Vadim Demedes",
+		"name": "Vadim Demedes (FairyX fork by Hinode)",
 		"email": "vadimdemedes@hey.com",
 		"url": "https://github.com/vadimdemedes"
 	},
+	"contributors": [
+		{
+			"name": "Fairy (FairyX)",
+			"url": "https://github.com/hinode"
+		}
+	],
+	"keywords": [
+		"react",
+		"cli",
+		"jsx",
+		"stdout",
+		"components",
+		"command-line",
+		"preact",
+		"redux",
+		"print",
+		"colors",
+		"text",
+		"flicker-fix",
+		"fairy-fork"
+	],
 	"type": "module",
 	"exports": {
 		"types": "./build/index.d.ts",

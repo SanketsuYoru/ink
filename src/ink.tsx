@@ -16,6 +16,7 @@ import * as dom from './dom.js';
 import logUpdate, {type LogUpdate} from './log-update.js';
 import instances from './instances.js';
 import App from './components/App.js';
+import {FlickerTracker, type FrameInfo} from './flicker-tracker.js';
 
 const isCi = process.env['CI'] === 'false' ? false : originalIsCi;
 const noop = () => {};
@@ -30,10 +31,22 @@ export type Options = {
 	waitUntilExit?: () => Promise<void>;
 };
 
+/**
+ * Ink v4.4.1-fairy.1
+ *
+ * Fairy Fork 关键改动：
+ * - 引入 FlickerTracker 跟踪帧变化
+ * - 移除 outputHeight >= rows 时的强制 clearTerminal
+ * - 微小变化（如 spinner）走增量更新路径，不擦整屏
+ *
+ * 解决问题：FairyX CLI 中 Spinner 每 100ms 转动时，整屏 clear+重写
+ * 导致 Markdown 表格闪烁。
+ */
 export default class Ink {
 	private readonly options: Options;
 	private readonly log: LogUpdate;
 	private readonly throttledLog: LogUpdate | DebouncedFunc<LogUpdate>;
+	private readonly flickerTracker: FlickerTracker;
 	// Ignore last render after unmounting a tree to prevent empty output before exit
 	private isUnmounted: boolean;
 	private lastOutput: string;
@@ -68,6 +81,9 @@ export default class Ink {
 					leading: true,
 					trailing: true
 			  });
+
+		// Fairy Fork: 初始化 flicker tracker
+		this.flickerTracker = new FlickerTracker();
 
 		// Ignore last render after unmounting a tree to prevent empty output before exit
 		this.isUnmounted = false;
@@ -120,6 +136,8 @@ export default class Ink {
 
 	resized = () => {
 		this.calculateLayout();
+		// Fairy Fork: 终端 resize 时重置 flicker tracker，因为 viewport 变了
+		this.flickerTracker.reset();
 		this.onRender();
 	};
 
@@ -173,13 +191,37 @@ export default class Ink {
 			this.fullStaticOutput += staticOutput;
 		}
 
-		if (outputHeight >= this.options.stdout.rows) {
+		// ⭐ Fairy Fork 核心改动 ⭐
+		// 原版 ink 在 outputHeight >= stdout.rows 时会强制 clearTerminal + 全屏重写
+		// 这是 Markdown 表格闪烁的根源（Spinner 每 100ms 触发此路径）
+		//
+		// 新逻辑：
+		// 1. 通过 FlickerTracker.shouldClearScreen 判断是否真的需要清屏
+		// 2. 只有 viewport 实际变化（resize）时才清屏
+		// 3. 其余情况走 log-update 路径（增量更新）
+
+		const terminalWidth = this.options.stdout.columns || 80;
+		const terminalHeight = this.options.stdout.rows;
+
+		const frameInfo: FrameInfo = {
+			output,
+			outputHeight,
+			viewport: { width: terminalWidth, height: terminalHeight }
+		};
+
+		const clearReason = this.flickerTracker.shouldClearScreen(frameInfo);
+
+		if (clearReason) {
+			// 真的需要清屏：resize 或 viewport 变化
 			this.options.stdout.write(
 				ansiEscapes.clearTerminal + this.fullStaticOutput + output
 			);
 			this.lastOutput = output;
 			return;
 		}
+
+		// Fairy Fork: 检查是否是 spinner 等微小变化
+		const isSpinnerChange = this.flickerTracker.isOnlySpinnerChange(output);
 
 		// To ensure static output is cleanly rendered before main output, clear main output first
 		if (hasStaticOutput) {
@@ -189,10 +231,19 @@ export default class Ink {
 		}
 
 		if (!hasStaticOutput && output !== this.lastOutput) {
+			// Fairy Fork: spinner 变化时也走 throttledLog，但 log-update
+			// 内部会自动检测并使用增量更新（≤3 行变化时）
 			this.throttledLog(output);
 		}
 
 		this.lastOutput = output;
+
+		// Fairy Fork: 暴露调试信息到 process.env（可选）
+		if (process.env['INK_FLICKER_DEBUG'] === 'true') {
+			process.env['INK_LAST_FLICKER_REASON'] = clearReason ?? 'none';
+			process.env['INK_LAST_CHANGE_TYPE'] = isSpinnerChange ? 'spinner-only' : 'full';
+			process.env['INK_LAST_CHANGE_COUNT'] = String(this.flickerTracker.getChangeCount());
+		}
 	};
 
 	render(node: ReactNode): void {
@@ -228,6 +279,8 @@ export default class Ink {
 			return;
 		}
 
+		// Fairy Fork: writeToStdout 时重置 flicker tracker，因为可能引入了外部内容
+		this.flickerTracker.reset();
 		this.log.clear();
 		this.options.stdout.write(data);
 		this.log(this.lastOutput);
@@ -249,6 +302,7 @@ export default class Ink {
 			return;
 		}
 
+		this.flickerTracker.reset();
 		this.log.clear();
 		this.options.stderr.write(data);
 		this.log(this.lastOutput);
@@ -306,6 +360,7 @@ export default class Ink {
 	clear(): void {
 		if (!isCi && !this.options.debug) {
 			this.log.clear();
+			this.flickerTracker.reset();
 		}
 	}
 
