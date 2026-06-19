@@ -287,21 +287,21 @@ export type Styles = {
 	 *
 	 * @default 'visible'
 	 */
-	readonly overflow?: 'visible' | 'hidden';
+	readonly overflow?: 'visible' | 'hidden' | 'scroll';
 
 	/**
 	 * Behavior for an element's overflow in horizontal direction.
 	 *
 	 * @default 'visible'
 	 */
-	readonly overflowX?: 'visible' | 'hidden';
+	readonly overflowX?: 'visible' | 'hidden' | 'scroll';
 
 	/**
 	 * Behavior for an element's overflow in vertical direction.
 	 *
 	 * @default 'visible'
 	 */
-	readonly overflowY?: 'visible' | 'hidden';
+	readonly overflowY?: 'visible' | 'hidden' | 'scroll';
 };
 
 const applyPositionStyles = (node: YogaNode, style: Styles): void => {

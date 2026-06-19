@@ -29,6 +29,40 @@ const applyPaddingToText = (node: DOMElement, text: string): string => {
 
 export type OutputTransformer = (s: string, index: number) => string;
 
+// Render children of a scroll container with viewport culling.
+// scrollTopY..scrollBottomY are the visible window in CHILD-LOCAL Yoga coords
+// (i.e. what getComputedTop() returns). Children entirely outside this window
+// are skipped.
+function renderScrolledChildren(
+	node: DOMElement,
+	output: Output,
+	offsetX: number,
+	offsetY: number,
+	transformers: OutputTransformer[],
+	skipStaticElements: boolean,
+	scrollTopY: number,
+	scrollBottomY: number,
+): void {
+	for (const childNode of node.childNodes) {
+		const childElem = childNode as DOMElement;
+		const cy = childElem.yogaNode;
+		if (cy) {
+			const childTop = cy.getComputedTop();
+			const childHeight = cy.getComputedHeight();
+			// Cull children entirely outside the visible window
+			if (childTop + childHeight <= scrollTopY || childTop >= scrollBottomY) {
+				continue;
+			}
+		}
+		renderNodeToOutput(childElem, output, {
+			offsetX,
+			offsetY,
+			transformers,
+			skipStaticElements,
+		});
+	}
+}
+
 // After nodes are laid out, render each to output object, which later gets rendered to terminal
 const renderNodeToOutput = (
 	node: DOMElement,
@@ -95,38 +129,110 @@ const renderNodeToOutput = (
 		if (node.nodeName === 'ink-box') {
 			renderBorder(x, y, node, output);
 
-			const clipHorizontally =
-				node.style.overflowX === 'hidden' || node.style.overflow === 'hidden';
-			const clipVertically =
-				node.style.overflowY === 'hidden' || node.style.overflow === 'hidden';
+			const overflowX = node.style.overflowX ?? node.style.overflow;
+			const overflowY = node.style.overflowY ?? node.style.overflow;
+			const clipHorizontally = overflowX === 'hidden' || overflowX === 'scroll';
+			const clipVertically = overflowY === 'hidden' || overflowY === 'scroll';
+			const isScrollY = overflowY === 'scroll';
+
+			let x1: number | undefined;
+			let x2: number | undefined;
+			let y1: number | undefined;
+			let y2: number | undefined;
+
+			if (clipHorizontally) {
+				x1 = x + yogaNode.getComputedBorder(Yoga.EDGE_LEFT);
+				x2 = x + yogaNode.getComputedWidth() - yogaNode.getComputedBorder(Yoga.EDGE_RIGHT);
+			}
+
+			if (clipVertically) {
+				y1 = y + yogaNode.getComputedBorder(Yoga.EDGE_TOP);
+				y2 = y + yogaNode.getComputedHeight() - yogaNode.getComputedBorder(Yoga.EDGE_BOTTOM);
+			}
 
 			if (clipHorizontally || clipVertically) {
-				const x1 = clipHorizontally
-					? x + yogaNode.getComputedBorder(Yoga.EDGE_LEFT)
-					: undefined;
-
-				const x2 = clipHorizontally
-					? x +
-					  yogaNode.getComputedWidth() -
-					  yogaNode.getComputedBorder(Yoga.EDGE_RIGHT)
-					: undefined;
-
-				const y1 = clipVertically
-					? y + yogaNode.getComputedBorder(Yoga.EDGE_TOP)
-					: undefined;
-
-				const y2 = clipVertically
-					? y +
-					  yogaNode.getComputedHeight() -
-					  yogaNode.getComputedBorder(Yoga.EDGE_BOTTOM)
-					: undefined;
-
 				output.clip({x1, x2, y1, y2});
 				clipped = true;
 			}
+
+			if (isScrollY) {
+				// ── Scroll container rendering ──
+				// Structure: <Box overflowY="scroll">  ← the scroll container
+				//              <Box flexShrink={0}>      ← the content wrapper
+				//                <Box height={topSpacer} />
+				//                {visible items...}
+				//                <Box height={bottomSpacer} />
+				//              </Box>
+				//            </Box>
+				//
+				// The content wrapper has flexShrink:0 so Yoga gives it
+				// its intrinsic height. We translate its Y by -scrollTop
+				// and cull children outside [scrollTop, scrollTop+innerHeight].
+
+				const content = node.childNodes.find(c => (c as DOMElement).yogaNode) as DOMElement | undefined;
+				const contentYoga = content?.yogaNode;
+
+				if (content && contentYoga) {
+					const padTop = yogaNode.getComputedPadding(Yoga.EDGE_TOP);
+					const padBottom = yogaNode.getComputedPadding(Yoga.EDGE_BOTTOM);
+					const innerHeight = Math.max(
+						1,
+						(y2 ?? y + yogaNode.getComputedHeight()) -
+							(y1 ?? y) -
+							padTop -
+							padBottom,
+					);
+
+					// Drain pendingScrollDelta
+					let scrollTop = node.scrollTop ?? 0;
+					const pending = node.pendingScrollDelta;
+					if (pending !== undefined && pending !== 0) {
+						scrollTop += pending;
+						node.pendingScrollDelta = undefined;
+					}
+
+					const scrollHeight = contentYoga.getComputedHeight();
+					const maxScroll = Math.max(0, scrollHeight - innerHeight);
+					scrollTop = Math.max(0, Math.min(scrollTop, maxScroll));
+					node.scrollTop = scrollTop;
+					node.scrollHeight = scrollHeight;
+					node.scrollViewportHeight = innerHeight;
+					node.scrollViewportTop = (y1 ?? y) + padTop;
+
+					// Content position with scroll offset applied
+					const contentX = x + contentYoga.getComputedLeft();
+					const contentY = y + contentYoga.getComputedTop() - scrollTop;
+
+					// Render children with culling
+					renderScrolledChildren(
+						content,
+						output,
+						contentX,
+						contentY,
+						newTransformers,
+						skipStaticElements,
+						scrollTop,
+						scrollTop + innerHeight,
+					);
+				}
+			} else {
+				// Non-scroll: render all children normally
+				for (const childNode of node.childNodes) {
+					renderNodeToOutput(childNode as DOMElement, output, {
+						offsetX: x,
+						offsetY: y,
+						transformers: newTransformers,
+						skipStaticElements,
+					});
+				}
+			}
+
+			if (clipped) {
+				output.unclip();
+			}
 		}
 
-		if (node.nodeName === 'ink-root' || node.nodeName === 'ink-box') {
+		if (node.nodeName === 'ink-root') {
 			for (const childNode of node.childNodes) {
 				renderNodeToOutput(childNode as DOMElement, output, {
 					offsetX: x,
@@ -134,10 +240,6 @@ const renderNodeToOutput = (
 					transformers: newTransformers,
 					skipStaticElements
 				});
-			}
-
-			if (clipped) {
-				output.unclip();
 			}
 		}
 	}

@@ -35,6 +35,15 @@ export type DOMElement = {
 	onComputeLayout?: () => void;
 	onRender?: () => void;
 	onImmediateRender?: () => void;
+
+	// Scroll properties (set by ScrollBox component, read by renderer)
+	scrollTop?: number;
+	pendingScrollDelta?: number;
+	scrollHeight?: number;
+	scrollViewportHeight?: number;
+	scrollViewportTop?: number;
+	scrollClampMin?: number;
+	scrollClampMax?: number;
 } & InkNode;
 
 export type TextNode = {
