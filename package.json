@@ -1,11 +1,11 @@
 {
 	"name": "ink",
-	"version": "4.4.1-fairy.1",
+	"version": "4.4.1-fairy.2",
 	"description": "React for CLI - Fairy Fork with FlickerTracker for spinner-stable Markdown tables",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/vadimdemedes/ink.git",
+		"url": "https://github.com/SanketsuYoru/ink.git",
 		"directory": "."
 	},
 	"author": {
@@ -44,8 +44,8 @@
 	},
 	"scripts": {
 		"dev": "tsc --watch",
-		"build": "tsc",
-		"prepare": "npm run build",
+		"build": "echo 'Build output tracked in git'",
+		"prepare": "echo 'Build output is tracked in git - skipping build'",
 		"test": "tsc --noEmit && xo && FORCE_COLOR=true ava",
 		"example": "NODE_NO_WARNINGS=1 node --loader ts-node/esm",
 		"benchmark": "NODE_NO_WARNINGS=1 node --loader ts-node/esm"
